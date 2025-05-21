@@ -1,61 +1,92 @@
 package com.chanbinme.springbatch.batchprocessing;
 
-import javax.sql.DataSource;
+import com.chanbinme.springbatch.domain.aggregation.DailyTransactionSummary;
+import com.chanbinme.springbatch.domain.aggregation.DailyTransactionSummaryId;
+import com.chanbinme.springbatch.domain.aggregation.DailyTransactionSummaryRepository;
+import com.chanbinme.springbatch.domain.transaction.Transaction;
+import jakarta.persistence.EntityManagerFactory;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.Map;
+import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
 import org.springframework.batch.core.job.builder.JobBuilder;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
-import org.springframework.batch.item.database.JdbcBatchItemWriter;
-import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
-import org.springframework.batch.item.file.FlatFileItemReader;
-import org.springframework.batch.item.file.builder.FlatFileItemReaderBuilder;
+import org.springframework.batch.item.ItemProcessor;
+import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.database.JpaPagingItemReader;
+import org.springframework.batch.item.database.builder.JpaPagingItemReaderBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.io.ClassPathResource;
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
 
+/**
+ * Spring Batch의 배치 작업을 설정하는 클래스이다.
+ * Spring Batch는 대량의 데이터를 처리하기 위한 프레임워크이다.
+ * 배치 작업은 주기적으로 실행되는 작업으로, 대량의 데이터를 처리하는 데 사용된다.
+ * 이 클래스에서는 JpaPagingItemReader, ItemProcessor, ItemWriter를 설정한다.
+ */
 @Configuration
+@RequiredArgsConstructor
 public class BatchConfiguration {
 
+    private final EntityManagerFactory entityManagerFactory;
+    private final DailyTransactionSummaryRepository dailyTransactionSummaryRepository;
+    private static final int CHUNK_SIZE = 100;
+
     /**
-     * FlatFileItemReader를 사용하여 CSV 파일을 읽어오는 메서드
-     * FlatFileItemReader는 CSV 파일을 읽어오는 ItemReader 인터페이스를 구현한 클래스이다.
-     * FlatFileItemReaderBuilder를 사용하여 FlatFileItemReader를 생성한다.
-     * FlatFileItemReaderBuilder는 Builder 패턴을 사용하여 FlatFileItemReader를 생성하는 클래스이다.
-     * @return FlatFileItemReader<Person>
+     * 전 날의 Transaction을 읽어오는 JpaPagingItemReader를 생성하는 메서드
+     * @return
      */
     @Bean
-    public FlatFileItemReader<Person> reader() {
-        return new FlatFileItemReaderBuilder<Person>()
-            .name("personItemReader")
-            .resource(new ClassPathResource("sample-data.csv"))
-            .delimited()
-            .names("firstName", "lastName")
-            .targetType(Person.class)
+    public JpaPagingItemReader<Transaction> reader() {
+        LocalDate today = LocalDate.now().minusDays(1);
+        LocalDateTime start = today.atStartOfDay();
+        LocalDateTime end = start.plusDays(1);
+        Map<String, Object> parameterValues = Map.of("start", start, "end", end);
+
+        return new JpaPagingItemReaderBuilder<Transaction>()
+            .name("transactionItemReader")
+            .entityManagerFactory(entityManagerFactory)
+            .pageSize(CHUNK_SIZE)
+            .parameterValues(parameterValues)
+            .queryString("SELECT t FROM Transaction t WHERE t.transactionDate >= :start AND t.transactionDate < :end")
             .build();
     }
 
-    @Bean
-    public PersonItemProcessor processor() {
-        return new PersonItemProcessor();
+    public ItemProcessor<Transaction, Transaction> processor() {
+        return null;
     }
 
     /**
-     * JdbcBatchItemWriter를 사용하여 DB에 데이터를 저장하는 메서드
-     * JdbcBatchItemWriter는 DB에 데이터를 저장하는 ItemWriter 인터페이스를 구현한 클래스이다.
-     * JdbcBatchItemWriterBuilder를 사용하여 JdbcBatchItemWriter를 생성한다.
-     * JdbcBatchItemWriterBuilder는 Builder 패턴을 사용하여 JdbcBatchItemWriter를 생성하는 클래스이다.
-     * @param dataSource DataSource
-     * @return JdbcBatchItemWriter<Person>
+     * ItemWriter는 배치 작업에서 데이터를 처리하는 역할을 한다.
+     * ItemWriter는 Chunk 단위로 데이터를 처리한다.
+     * @return
      */
     @Bean
-    public JdbcBatchItemWriter<Person> writer(DataSource dataSource) {
-        return new JdbcBatchItemWriterBuilder<Person>()
-            .sql("INSERT INTO people (first_name, last_name) VALUES (:firstName, :lastName)")
-            .dataSource(dataSource)
-            .beanMapped()
-            .build();
+    public ItemWriter<Transaction> writer() {
+        return chunk -> {
+            // stream() 메서드를 사용해 DailyTransactionSummary에 저장할 transactionAmount, transactionCount를 집계한다.
+            chunk.getItems().stream()
+                .collect(Collectors.groupingBy(
+                    Transaction::getTransactionType,
+                    Collectors.summarizingLong(Transaction::getTransactionAmount)))
+                .forEach((transactionType, summary) -> {
+                    DailyTransactionSummary dailyTransactionSummary =
+                        DailyTransactionSummary.builder()
+                        .id(DailyTransactionSummaryId.builder()
+                                .transactionType(transactionType)
+                                .transactionDate(LocalDate.now().minusDays(1))
+                                .build())
+                        .transactionAmount(summary.getSum())
+                        .transactionCount(summary.getCount())
+                        .build();
+                    dailyTransactionSummaryRepository.save(dailyTransactionSummary);
+                });
+        };
     }
 
     /**
@@ -76,24 +107,21 @@ public class BatchConfiguration {
     }
 
     /**
-     * Step을 생성하는 메서드
+     * JobRepository를 사용하여 Step을 생성하는 메서드
      * Step은 배치 작업의 단위이다.
-     * StepBuilder를 사용하여 Step을 생성한다.
      * @param jobRepository JobRepository
-     * @param transactionManager DataSourceTransactionManager
-     * @param reader FlatFileItemReader<Person>
-     * @param processor PersonItemProcessor
-     * @param writer JdbcBatchItemWriter<Person>
+     * @param transactionManager PlatformTransactionManager
+     * @param reader JpaPagingItemReader
+     * @param writer ItemWriter
      * @return Step
      */
     @Bean
-    public Step step1(JobRepository jobRepository, DataSourceTransactionManager transactionManager,
-        FlatFileItemReader<Person> reader,
-        PersonItemProcessor processor, JdbcBatchItemWriter<Person> writer) {
+    public Step step1(JobRepository jobRepository, PlatformTransactionManager transactionManager,
+        JpaPagingItemReader<Transaction> reader,
+        ItemWriter<Transaction> writer) {
         return new StepBuilder("step1", jobRepository)
-            .<Person, Person>chunk(3, transactionManager)
+            .<Transaction, Transaction>chunk(CHUNK_SIZE, transactionManager)
             .reader(reader)
-            .processor(processor)
             .writer(writer)
             .build();
     }
