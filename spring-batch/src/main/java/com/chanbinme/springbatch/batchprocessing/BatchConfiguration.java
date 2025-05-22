@@ -3,6 +3,7 @@ package com.chanbinme.springbatch.batchprocessing;
 import com.chanbinme.springbatch.domain.aggregation.DailyTransactionSummary;
 import com.chanbinme.springbatch.domain.aggregation.DailyTransactionSummaryItemWriter;
 import com.chanbinme.springbatch.domain.transaction.Transaction;
+import com.chanbinme.springbatch.domain.transaction.TransactionRepository;
 import jakarta.persistence.EntityManagerFactory;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -11,7 +12,10 @@ import javax.sql.DataSource;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
+import org.springframework.batch.core.configuration.annotation.StepScope;
 import org.springframework.batch.core.job.builder.JobBuilder;
+import org.springframework.batch.core.partition.support.Partitioner;
+import org.springframework.batch.core.partition.support.TaskExecutorPartitionHandler;
 import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.item.ItemProcessor;
@@ -20,8 +24,11 @@ import org.springframework.batch.item.database.JdbcBatchItemWriter;
 import org.springframework.batch.item.database.JpaPagingItemReader;
 import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
 import org.springframework.batch.item.database.builder.JpaPagingItemReaderBuilder;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.task.TaskExecutor;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.transaction.PlatformTransactionManager;
 
 /**
@@ -34,25 +41,80 @@ import org.springframework.transaction.PlatformTransactionManager;
 @RequiredArgsConstructor
 public class BatchConfiguration {
 
+    private final JobRepository jobRepository;
+    private final PlatformTransactionManager transactionManager;
     private final EntityManagerFactory entityManagerFactory;
+    private final TransactionRepository transactionRepository;
     private static final int CHUNK_SIZE = 100;
+    private static final int POOL_SIZE = 10;
+
+    /**
+     * ThreadPoolTaskExecutor는 멀티 스레드로 배치 작업을 처리하기 위한 Executor이다.
+     * ThreadPoolTaskExecutor는 ThreadPoolTaskScheduler를 사용하여 스레드를 관리한다.
+     */
+    @Bean
+    public TaskExecutor executor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(POOL_SIZE);
+        executor.setMaxPoolSize(POOL_SIZE);
+        executor.setQueueCapacity(POOL_SIZE);
+        executor.setThreadNamePrefix("batch-thread-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.initialize();
+
+        return executor;
+    }
+
+    @Bean
+    public TaskExecutorPartitionHandler partitionHandler(Step workerStep) {
+        TaskExecutorPartitionHandler partitionHandler = new TaskExecutorPartitionHandler();
+        partitionHandler.setGridSize(POOL_SIZE);
+        partitionHandler.setTaskExecutor(executor());
+        partitionHandler.setStep(workerStep);
+        return partitionHandler;
+    }
+
+    /**
+     * Partitioner는 배치 작업을 여러 개의 파트로 나누는 역할을 한다.
+     * Partitioner는 PartitionHandler와 함께 사용된다.
+     * PartitionHandler는 Partitioner가 나눈 파트를 실행하는 역할을 한다.
+     */
+    @Bean
+    public TransactionPartitioner partitioner() {
+        return new TransactionPartitioner(transactionRepository);
+    }
+
+    /**
+     * JobRepository는 배치 작업을 관리하는 인터페이스이다.
+     * JobRepositoryFactoryBean을 사용하여 JobRepository를 생성한다.
+     */
+    @Bean(name = "managerStep")
+    public Step managerStep(JobRepository jobRepository, Step workerStep) {
+        return new StepBuilder("managerStep", jobRepository)
+            .partitioner("workerStep", partitioner())
+            .step(workerStep)
+            .gridSize(POOL_SIZE)
+            .taskExecutor(executor())
+            .build();
+    }
 
     /**
      * 전 날의 Transaction을 읽어오는 JpaPagingItemReader를 생성하는 메서드
      */
     @Bean
-    public JpaPagingItemReader<Transaction> reader() {
-        LocalDate today = LocalDate.now().minusDays(1);
-        LocalDateTime start = today.atStartOfDay();
-        LocalDateTime end = start.plusDays(1);
-        Map<String, Object> parameterValues = Map.of("start", start, "end", end);
+    @StepScope
+    public JpaPagingItemReader<Transaction> reader(
+        @Value("#{stepExecutionContext['minId']}") Long minId,
+        @Value("#{stepExecutionContext['maxId']}") Long maxId
+    ) {
+        Map<String, Object> parameterValues = Map.of("minId", minId, "maxId", maxId);
 
         return new JpaPagingItemReaderBuilder<Transaction>()
             .name("transactionItemReader")
             .entityManagerFactory(entityManagerFactory)
             .pageSize(CHUNK_SIZE)
             .parameterValues(parameterValues)
-            .queryString("SELECT t FROM Transaction t WHERE t.transactionDate >= :start AND t.transactionDate < :end")
+            .queryString("SELECT t FROM Transaction t WHERE t.id BETWEEN :minId AND :maxId")
             .build();
     }
 
@@ -65,6 +127,7 @@ public class BatchConfiguration {
      * ItemWriter는 Chunk 단위로 데이터를 처리한다.
      */
     @Bean(value = "dailyTransactionSummaryItemWriter")
+    @StepScope
     public ItemWriter<Transaction> dailyTransactionSummaryItemWriter(JdbcBatchItemWriter<DailyTransactionSummary> jdbcBatchItemWriter) {
         return new DailyTransactionSummaryItemWriter(jdbcBatchItemWriter);
     }
@@ -74,6 +137,7 @@ public class BatchConfiguration {
      * JdbcBatchItemWriterBuilder를 사용하여 JdbcBatchItemWriter를 생성한다.
      */
     @Bean(value = "jdbcBatchItemWriter")
+    @StepScope
     public JdbcBatchItemWriter<DailyTransactionSummary> jdbcBatchItemWriter(DataSource dataSource) {
         return new JdbcBatchItemWriterBuilder<DailyTransactionSummary>()
             .dataSource(dataSource)
@@ -94,10 +158,10 @@ public class BatchConfiguration {
      * JobRepositoryFactoryBean을 사용하여 JobRepository를 생성한다.
      */
     @Bean
-    public Job job(JobRepository jobRepository, Step step1, JdbcCompletionNotificationListener listener) {
+    public Job job(JobRepository jobRepository, Step managerStep, JdbcCompletionNotificationListener listener) {
         return new JobBuilder("importUserJob", jobRepository)
             .listener(listener)
-            .start(step1)
+            .start(managerStep)
             .build();
     }
 
@@ -105,14 +169,14 @@ public class BatchConfiguration {
      * JobRepository를 사용하여 Step을 생성하는 메서드
      * Step은 배치 작업의 단위이다.
      */
-    @Bean
-    public Step step1(JobRepository jobRepository, PlatformTransactionManager transactionManager,
+    @Bean(name = "workerStep")
+    public Step workerStep(
         JpaPagingItemReader<Transaction> reader,
-        ItemWriter<Transaction> writer) {
-        return new StepBuilder("step1", jobRepository)
+        ItemWriter<Transaction> dailyTransactionSummaryItemWriter) {
+        return new StepBuilder("workerStep", jobRepository)
             .<Transaction, Transaction>chunk(CHUNK_SIZE, transactionManager)
             .reader(reader)
-            .writer(writer)
+            .writer(dailyTransactionSummaryItemWriter)
             .build();
     }
 }
