@@ -1,10 +1,6 @@
 package com.chanbinme.springbatch.domain.aggregation;
 
-import static jakarta.persistence.EnumType.*;
-
-import com.chanbinme.springbatch.domain.transaction.TransactionType;
 import jakarta.persistence.Embeddable;
-import jakarta.persistence.Enumerated;
 import java.io.Serializable;
 import java.time.LocalDate;
 import lombok.AccessLevel;
@@ -26,6 +22,5 @@ public class DailyTransactionSummaryId implements Serializable {
     @DateTimeFormat(pattern = "yyyy-MM-dd")
     private LocalDate transactionDate;
 
-    @Enumerated(value = STRING)
-    private TransactionType transactionType;
+    private String transactionType;
 }

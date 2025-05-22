@@ -1,14 +1,13 @@
 package com.chanbinme.springbatch.batchprocessing;
 
 import com.chanbinme.springbatch.domain.aggregation.DailyTransactionSummary;
-import com.chanbinme.springbatch.domain.aggregation.DailyTransactionSummaryId;
-import com.chanbinme.springbatch.domain.aggregation.DailyTransactionSummaryRepository;
+import com.chanbinme.springbatch.domain.aggregation.DailyTransactionSummaryItemWriter;
 import com.chanbinme.springbatch.domain.transaction.Transaction;
 import jakarta.persistence.EntityManagerFactory;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Map;
-import java.util.stream.Collectors;
+import javax.sql.DataSource;
 import lombok.RequiredArgsConstructor;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
@@ -17,7 +16,9 @@ import org.springframework.batch.core.repository.JobRepository;
 import org.springframework.batch.core.step.builder.StepBuilder;
 import org.springframework.batch.item.ItemProcessor;
 import org.springframework.batch.item.ItemWriter;
+import org.springframework.batch.item.database.JdbcBatchItemWriter;
 import org.springframework.batch.item.database.JpaPagingItemReader;
+import org.springframework.batch.item.database.builder.JdbcBatchItemWriterBuilder;
 import org.springframework.batch.item.database.builder.JpaPagingItemReaderBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -34,12 +35,10 @@ import org.springframework.transaction.PlatformTransactionManager;
 public class BatchConfiguration {
 
     private final EntityManagerFactory entityManagerFactory;
-    private final DailyTransactionSummaryRepository dailyTransactionSummaryRepository;
     private static final int CHUNK_SIZE = 100;
 
     /**
      * 전 날의 Transaction을 읽어오는 JpaPagingItemReader를 생성하는 메서드
-     * @return
      */
     @Bean
     public JpaPagingItemReader<Transaction> reader() {
@@ -64,42 +63,38 @@ public class BatchConfiguration {
     /**
      * ItemWriter는 배치 작업에서 데이터를 처리하는 역할을 한다.
      * ItemWriter는 Chunk 단위로 데이터를 처리한다.
-     * @return
      */
-    @Bean
-    public ItemWriter<Transaction> writer() {
-        return chunk -> {
-            // stream() 메서드를 사용해 DailyTransactionSummary에 저장할 transactionAmount, transactionCount를 집계한다.
-            chunk.getItems().stream()
-                .collect(Collectors.groupingBy(
-                    Transaction::getTransactionType,
-                    Collectors.summarizingLong(Transaction::getTransactionAmount)))
-                .forEach((transactionType, summary) -> {
-                    DailyTransactionSummary dailyTransactionSummary =
-                        DailyTransactionSummary.builder()
-                        .id(DailyTransactionSummaryId.builder()
-                                .transactionType(transactionType)
-                                .transactionDate(LocalDate.now().minusDays(1))
-                                .build())
-                        .transactionAmount(summary.getSum())
-                        .transactionCount(summary.getCount())
-                        .build();
-                    dailyTransactionSummaryRepository.save(dailyTransactionSummary);
-                });
-        };
+    @Bean(value = "dailyTransactionSummaryItemWriter")
+    public ItemWriter<Transaction> dailyTransactionSummaryItemWriter(JdbcBatchItemWriter<DailyTransactionSummary> jdbcBatchItemWriter) {
+        return new DailyTransactionSummaryItemWriter(jdbcBatchItemWriter);
+    }
+
+    /**
+     * JdbcBatchItemWriter는 JDBC를 사용하여 데이터베이스에 데이터를 쓰는 ItemWriter이다.
+     * JdbcBatchItemWriterBuilder를 사용하여 JdbcBatchItemWriter를 생성한다.
+     */
+    @Bean(value = "jdbcBatchItemWriter")
+    public JdbcBatchItemWriter<DailyTransactionSummary> jdbcBatchItemWriter(DataSource dataSource) {
+        return new JdbcBatchItemWriterBuilder<DailyTransactionSummary>()
+            .dataSource(dataSource)
+            .sql("""
+                INSERT INTO daily_transaction_summary (transaction_date, transaction_type, transaction_amount, transaction_count)
+                VALUES (:id.transactionDate, :id.transactionType, :transactionAmount, :transactionCount)
+                ON DUPLICATE KEY UPDATE
+                    transaction_amount = transaction_amount + VALUES(transaction_amount),
+                    transaction_count = transaction_count + VALUES(transaction_count)
+                """)
+            .beanMapped()
+            .build();
     }
 
     /**
      * JobRepository를 사용하여 Job을 생성하는 메서드
      * JobRepository는 배치 작업을 관리하는 인터페이스이다.
      * JobRepositoryFactoryBean을 사용하여 JobRepository를 생성한다.
-     * @param jobRepository JobRepository
-     * @param step1 Step
-     * @param listener JdbcCompletionNotificationListener
-     * @return Job
      */
     @Bean
-    public Job importUserJob(JobRepository jobRepository, Step step1, JdbcCompletionNotificationListener listener) {
+    public Job job(JobRepository jobRepository, Step step1, JdbcCompletionNotificationListener listener) {
         return new JobBuilder("importUserJob", jobRepository)
             .listener(listener)
             .start(step1)
@@ -109,11 +104,6 @@ public class BatchConfiguration {
     /**
      * JobRepository를 사용하여 Step을 생성하는 메서드
      * Step은 배치 작업의 단위이다.
-     * @param jobRepository JobRepository
-     * @param transactionManager PlatformTransactionManager
-     * @param reader JpaPagingItemReader
-     * @param writer ItemWriter
-     * @return Step
      */
     @Bean
     public Step step1(JobRepository jobRepository, PlatformTransactionManager transactionManager,
