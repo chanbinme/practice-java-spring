@@ -8,11 +8,9 @@ import com.chanbinme.springconcurrency.numbersequence.ItemRepository;
 import com.chanbinme.springconcurrency.numbersequence.ItemService;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentHashMap.KeySetView;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -63,7 +61,6 @@ public class ItemConcurrencyTest {
         latch.await();
         executor.shutdown();
 
-
         // then
         Item item = itemService.getItem(1L);
         System.out.println("최종 수량: " + item.getStockQuantity());
@@ -72,4 +69,5 @@ public class ItemConcurrencyTest {
             () -> assertEquals(threadCount, quantityHistory.size()),   // 중복 없이 재고 수량 기록
             () -> assertEquals(originalStockQuantity - threadCount, item.getStockQuantity())   // 최종 재고 수량이 90이어야 함
         );
-    }}
+    }
+}

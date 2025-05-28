@@ -30,10 +30,9 @@ public class Item {
     private int stockQuantity;
 
     public void decreaseStock(int quantity) {
-        int restStock = this.stockQuantity - quantity;
-        if (restStock < 0) {
+        if (this.stockQuantity < quantity) {
             throw new RuntimeException("재고가 부족합니다. 현재 재고: " + this.stockQuantity + ", 요청 수량: " + quantity);
         }
-        this.stockQuantity = restStock;
+        this.stockQuantity -= quantity;
     }
 }

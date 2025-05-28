@@ -10,7 +10,6 @@ public class ItemService {
 
     private final ItemRepository itemRepository;
 
-    // 아이템 수량 감소 메서드명
     @Transactional
     public int decreaseStock(Long itemId, int quantity) {
         Item item = itemRepository.findById(itemId)
