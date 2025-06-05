@@ -5,6 +5,7 @@ import static jakarta.persistence.GenerationType.*;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.Id;
+import jakarta.persistence.Version;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -28,6 +29,9 @@ public class Item {
 
     @Comment("아이템 재고 수량")
     private int stockQuantity;
+
+    @Version
+    private Long version;
 
     public void decreaseStock(int quantity) {
         if (this.stockQuantity < quantity) {

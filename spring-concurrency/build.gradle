@@ -6,6 +6,9 @@ dependencies {
 	// spring data jpa
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 
+	// spring retry
+	implementation 'org.springframework.retry:spring-retry'
+
 	// H2 database
 	implementation 'com.h2database:h2'
 	runtimeOnly 'com.h2database:h2'

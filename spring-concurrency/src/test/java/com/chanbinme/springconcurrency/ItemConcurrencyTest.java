@@ -11,6 +11,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,11 +49,17 @@ public class ItemConcurrencyTest {
 
         // when
         // 10개의 스레드를 생성하여 동시에 재고 감소 작업을 수행
+        AtomicInteger successCount = new AtomicInteger(0); // 성공한 스레드 수를 기록하기 위한 AtomicInteger
+        AtomicInteger failureCount = new AtomicInteger(0); // 실패한 스레드 수를 기록하기 위한 AtomicInteger
         for (int i = 0; i < threadCount; i++) {
             executor.submit(() -> {
                 try {
                     int stockQuantity = itemService.decreaseStock(1L, 1);   // 아이템 ID 1의 재고를 1 감소(비관적 락 적용)
                     quantityHistory.add(stockQuantity); // 현재 재고 수량을 기록
+                    successCount.incrementAndGet(); // 성공한 스레드 수 증가
+                } catch (Exception e) {
+                    failureCount.incrementAndGet(); // 실패한 스레드 수 증가
+                    System.err.println("재고 감소 실패: " + e.getClass() + " - " + e.getMessage()  ); // 예외 메시지 출력
                 } finally {
                     latch.countDown();  // 작업 완료 시 CountDownLatch 감소
                 }
@@ -63,6 +71,9 @@ public class ItemConcurrencyTest {
 
         // then
         Item item = itemService.getItem(1L);
+        System.out.println("성공한 스레드 수: " + successCount.get());
+        System.out.println("실패한 스레드 수: " + failureCount.get());
+        System.out.println("재고 수량 기록: " + quantityHistory.stream().sorted().toList());
         System.out.println("최종 수량: " + item.getStockQuantity());
 
         assertAll(
