@@ -1,4 +1,4 @@
-package com.chanbinme.envers.entity;
+package com.chanbinme.envers.post.entity;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;

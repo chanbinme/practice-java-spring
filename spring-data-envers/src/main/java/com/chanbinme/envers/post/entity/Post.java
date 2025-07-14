@@ -1,4 +1,4 @@
-package com.chanbinme.envers.entity;
+package com.chanbinme.envers.post.entity;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -47,6 +47,10 @@ public class Post {
         if (comments != null) {
             comments.remove(comment);
         }
+    }
+
+    public void updateContent(String content) {
+        this.content = content;
     }
 }
 
