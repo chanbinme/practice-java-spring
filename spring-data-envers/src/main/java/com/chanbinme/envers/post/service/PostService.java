@@ -1,5 +1,6 @@
 package com.chanbinme.envers.post.service;
 
+import com.chanbinme.envers.post.dto.PostCreateRequestDto;
 import com.chanbinme.envers.post.entity.Post;
 import com.chanbinme.envers.post.repository.PostRepository;
 import lombok.RequiredArgsConstructor;
@@ -13,8 +14,11 @@ public class PostService {
 
     private final PostRepository postRepository;
 
-    public void createPost() {
-        Post post = Post.builder().title("아 덥다").content("더워 죽겠다. 너무너무 덥다...").build();
+    public void createPost(PostCreateRequestDto postCreateRequestDto) {
+        Post post = Post.builder()
+            .title(postCreateRequestDto.title())
+            .content(postCreateRequestDto.content())
+            .build();
         postRepository.save(post);
     }
 
