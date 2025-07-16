@@ -25,3 +25,6 @@ spring:
         hibernate:
           envers:
             audit_table_suffix: _history
+logging:
+  level:
+    org.springframework.web.filter.CommonsRequestLoggingFilter: DEBUG
