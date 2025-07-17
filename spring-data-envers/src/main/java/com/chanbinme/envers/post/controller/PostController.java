@@ -19,7 +19,8 @@ public class PostController {
 
     @PostMapping
     public void createPost(@RequestBody PostCreateRequestDto postCreateRequestDto) {
-        postService.createPost(postCreateRequestDto);
+        throw new UnsupportedOperationException("Post creation is not supported yet.");
+//        postService.createPost(postCreateRequestDto);
     }
 
     @PatchMapping
