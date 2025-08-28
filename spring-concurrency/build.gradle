@@ -12,6 +12,15 @@ dependencies {
 	// H2 database
 	implementation 'com.h2database:h2'
 	runtimeOnly 'com.h2database:h2'
+
+	// spring data redis
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+
+	// embedded redis server
+	implementation 'com.github.codemonstur:embedded-redis:1.4.3'
+
+	// spring test
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
 
 tasks.register("prepareKotlinBuildScriptModel") {}
