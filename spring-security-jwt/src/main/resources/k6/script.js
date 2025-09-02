@@ -8,7 +8,7 @@ export let options = {
 }
 
 export default function () {
-    const url = 'http://192.168.45.186:8080/api/auth/login';
+    const url = 'http://localhost:8080/api/auth/login';
     const payload = JSON.stringify({
         username: 'user',
         password: 'password',
